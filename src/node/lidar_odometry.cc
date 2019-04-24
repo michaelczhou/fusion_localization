@@ -100,34 +100,33 @@ double para_t[3] = {0, 0, 0};
 Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q);
 Eigen::Map<Eigen::Vector3d> t_last_curr(para_t);
 
-
+loam::State state_i;
+loam::State state_j;
 
 std::queue<sensor_msgs::PointCloud2ConstPtr> cornerSharpBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> cornerLessSharpBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> surfFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> surfLessFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> fullPointsBuf;
-std::queue<geometry_msgs::TwistStampedConstPtr> wheelBuf;
 std::queue<std::pair<double, Eigen::Vector3d>> velBuf;
 std::queue<std::pair<double, Eigen::Vector3d>> gyrBuf;
 std::mutex mBuf;
 
 bool WheelAvailable(double t)
 {
-    if(!wheelBuf.empty() && t <= wheelBuf.back()->header.stamp.toSec())
+    if(!velBuf.empty() && t <= velBuf.back().first)
         return true;
     else
         return false;
 }
 
-void inputWheel(double t, const Eigen::Vector3d &linearVelocity, const Eigen::Vector3d &angularVelocity, const geometry_msgs::TwistStampedConstPtr &wheel_msg)
+void inputWheel(double t, const Eigen::Vector3d &linearVelocity, const Eigen::Vector3d &angularVelocity)
 {
     mBuf.lock();
-    wheelBuf.push(wheel_msg);
     velBuf.push(std::make_pair(t, linearVelocity));
     gyrBuf.push(std::make_pair(t, angularVelocity));
-    //printf("input imu with time %f \n", t);
     mBuf.unlock();
+    //con.notify_one();
 }
 
 bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen::Vector3d>> &velVector,
@@ -167,21 +166,23 @@ void initFirstWheelPose(std::vector<std::pair<double, Eigen::Vector3d>> &accVect
     printf("init first imu pose\n");
     initFirstPoseFlag = true;
     //return;
-    Eigen::Vector3d averAcc(0, 0, 0);
+    Eigen::Vector3d averAcc(0, 0, 0);  //hree is velocity
     int n = (int)accVector.size();
     for(size_t i = 0; i < accVector.size(); i++)
     {
         averAcc = averAcc + accVector[i].second;
     }
     averAcc = averAcc / n;
-    printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
-    Eigen::Matrix3d R0 = Utility::g2R(averAcc);
-    double yaw = Utility::R2ypr(R0).x();
-    R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
-    //state_i.q.matrix() = R0;
-    //Rs[0] = R0;
-    //cout << "init R0 " << endl << Rs[0] << endl;
-    //Vs[0] = Vector3d(5, 0, 0);
+
+    state_i.p = averAcc * (accVector.front().first - accVector.back().first);
+//    printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
+//    Eigen::Matrix3d R0 = Utility::g2R(averAcc);
+//    double yaw = Utility::R2ypr(R0).x();
+//    R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
+//    state_i.q.matrix() = R0;
+//    Rs[0] = R0;
+//    cout << "init R0 " << endl << Rs[0] << endl;
+//    Vs[0] = Vector3d(5, 0, 0);
 }
 
 // undistort lidar point
@@ -258,7 +259,7 @@ void wheelHandler(const geometry_msgs::TwistStampedConstPtr &wheel_msg)
     double rz = wheel_msg->twist.angular.z;
     Vector3d vel(vx, vy, vz);
     Vector3d gyr(rx, ry, rz);
-    inputWheel(t, vel, gyr, wheel_msg);
+    inputWheel(t, vel, gyr);
 
     if (init_wheel)
     {
@@ -384,7 +385,7 @@ int main(int argc, char **argv)
     ros::Subscriber subSurfPointsFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_flat", 100, laserCloudFlatHandler);
     ros::Subscriber subSurfPointsLessFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100, laserCloudLessFlatHandler);
     ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 100, laserCloudFullResHandler);
-    ros::Subscriber subWheelIntegrator = nh.subscribe<geometry_msgs::TwistStamped>("/wheel", 200, wheelHandler, ros::TransportHints().tcpNoDelay());
+    ros::Subscriber subWheelIntegrator = nh.subscribe<geometry_msgs::TwistStamped>("/wheel", 200, wheelHandler);//, ros::TransportHints().tcpNoDelay());
 
     ros::Publisher pubLaserCloudCornerLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100);
     ros::Publisher pubLaserCloudSurfLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100);
@@ -396,13 +397,6 @@ int main(int argc, char **argv)
 
     nav_msgs::Path laserPath;
 
-    loam::State state_i;
-    loam::State state_j;
-    loam::State state_k;
-
-    std::vector<std::pair<double, Eigen::Vector3d>> velVector, gyrVector;
-    std::vector<RawWheel> wheels;
-
     int frameCount = 0;
     ros::Rate rate(100);
 
@@ -410,16 +404,19 @@ int main(int argc, char **argv)
     {
         ros::spinOnce();
 
+        std::vector<std::pair<double, Eigen::Vector3d>> velVector, gyrVector;
+        std::vector<RawWheel> wheels;
+
         if (!cornerSharpBuf.empty() && !cornerLessSharpBuf.empty() &&
             !surfFlatBuf.empty() && !surfLessFlatBuf.empty() &&
-            !fullPointsBuf.empty() && !wheelBuf.empty())
+            !fullPointsBuf.empty() && !velBuf.empty())
         {
             timeCornerPointsSharp = cornerSharpBuf.front()->header.stamp.toSec();
             timeCornerPointsLessSharp = cornerLessSharpBuf.front()->header.stamp.toSec();
             timeSurfPointsFlat = surfFlatBuf.front()->header.stamp.toSec();
             timeSurfPointsLessFlat = surfLessFlatBuf.front()->header.stamp.toSec();
             timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
-            timeWheel = wheelBuf.front()->header.stamp.toSec();
+            timeWheel = velBuf.front().first;
             curTime = fullPointsBuf.front()->header.stamp.toSec();
             while(1)
             {
@@ -467,8 +464,6 @@ int main(int argc, char **argv)
             if (USE_WHEEL){
                 getWheelInterval(prevTime, curTime, velVector, gyrVector);
             }
-            wheelBuf.pop();
-
             mBuf.unlock();
 
 
@@ -678,7 +673,6 @@ int main(int argc, char **argv)
                             }
                         }
                     }
-                    //problem.SetParameterBlockConstant(state_i.arr.data());
 
                     if ((corner_correspondence + plane_correspondence) < 10)
                     {
@@ -694,12 +688,21 @@ int main(int argc, char **argv)
                         }
                         Eigen::Matrix<double, 6, 1> cov;
                         cov << 1, 1, 1, 1, 1, 1;
+
                         loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
+                        LOG_F(INFO,
+                              "wheels value = %17.10e"
+                              "con = %17.10e"
+                              "state_i.arr.data() = %17.10e"
+                              "integral_curr = %17.10e",
+                              wheels,cov,state_i.arr.data(),integral_curr);
                         problem.AddResidualBlock(
                             new loam::WheelFactor(integral_curr),
                             new ceres::HuberLoss(0.1),
-                            state_k.arr.data(), integral_curr.mean.arr.data());
-                        state_k.arr = integral_curr.mean.arr;
+                            state_i.arr.data(), state_j.arr.data());
+                        LOG_F(INFO,
+                                  "state_i.arr.data() = %17.10e",
+                                   state_i.arr.data());
                     }
                     problem.SetParameterBlockConstant(state_i.arr.data());
                     LOG_F(INFO, "I AM HERE");
@@ -715,17 +718,18 @@ int main(int argc, char **argv)
                     ceres::Solve(options, &problem, &summary);
                     LOG_S(INFO) << summary.BriefReport();
                     LOG_F(INFO, "I AM HERE");
-
                     q_last_curr = state_i.q.conjugate() * state_j.q;
                     t_last_curr = state_i.q.conjugate() * (state_j.p - state_i.p);
                 }
                 LOG_F(INFO, "I AM HERE");
                 q_w_curr = state_j.q;
                 t_w_curr = state_j.p;
+
+                //initialize state
                 state_i.q = state_j.q;
                 state_i.p = state_j.p;
-                state_j.p = state_j.p + state_j.q * t_last_curr;
-                state_j.q = state_j.q * q_last_curr;
+                state_j.p = state_j.p - state_j.q * t_last_curr;
+                state_j.q = state_j.q * q_last_curr.conjugate();
             }
             prevTime = curTime;
 

@@ -21,15 +21,15 @@ find_package(catkin REQUIRED COMPONENTS
     std_msgs geometry_msgs nav_msgs sensor_msgs
     tf cv_bridge image_transport)# camera_models)
 
-include(DownloadProject)
-download_project(
-    PROJ                loguru
-    GIT_REPOSITORY      https://github.com/emilk/loguru.git 
-    GIT_TAG             v2.0.0
-    UPDATE_DISCONNECTED 1)
+#include(DownloadProject)
+#download_project(
+#    PROJ                loguru
+#    GIT_REPOSITORY      https://github.com/emilk/loguru.git
+#    GIT_TAG             v2.0.0
+#    UPDATE_DISCONNECTED 1)
 
-file(COPY ${loguru_SOURCE_DIR}/loguru.hpp DESTINATION ${EXTERNAL_PROJECT_DIR})
-file(COPY ${loguru_SOURCE_DIR}/loguru.cpp DESTINATION ${EXTERNAL_PROJECT_DIR})
+#file(COPY ${loguru_SOURCE_DIR}/loguru.hpp DESTINATION ${EXTERNAL_PROJECT_DIR})
+#file(COPY ${loguru_SOURCE_DIR}/loguru.cpp DESTINATION ${EXTERNAL_PROJECT_DIR})
 
 catkin_package()
 
