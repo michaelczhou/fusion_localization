@@ -132,10 +132,11 @@ void inputWheel(double t, const Eigen::Vector3d &linearVelocity, const Eigen::Ve
 bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen::Vector3d>> &velVector,
                                             std::vector<std::pair<double, Eigen::Vector3d>> &gyrVector){
     if (velBuf.empty()){
-        printf("not receive wheel\n");
+        LOG_F(INFO, "not receive wheel\n");
         return false;
     }
 
+    //get wheelData before currFrame
     if(t1 <= velBuf.back().first)
     {
         while (velBuf.front().first <= t0)
@@ -155,7 +156,7 @@ bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen:
     }
     else
     {
-        printf("wait for wheel\n");
+        LOG_F(INFO, "wait for wheel\n");
         return false;
     }
     return true;
@@ -273,13 +274,6 @@ void wheelHandler(const geometry_msgs::TwistStampedConstPtr &wheel_msg)
     tmp_Q = tmp_Q * Utility::deltaQ(gyr * dt);
     tmp_P = tmp_P + tmp_Q.toRotationMatrix() * vel * dt;
     tmp_V = vel;
-
-    Eigen::Matrix3d R_v2c;
-    R_v2c << 7.027555e-03, -9.999753e-01, 2.599616e-05,
-        -2.254837e-03, -4.184312e-05, -9.999975e-01,
-        9.999728e-01,  7.027479e-03, -2.255075e-03;
-    Eigen::Quaterniond q_v2c(R_v2c);
-    Eigen::Vector3d t_v2c{-7.137748e-03, -7.482656e-02, -3.336324e-01};
 
     nav_msgs::Odometry wheelOdometry;
     wheelOdometry.header.frame_id = "/camera_init";
@@ -418,6 +412,12 @@ int main(int argc, char **argv)
             timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
             timeWheel = velBuf.front().first;
             curTime = fullPointsBuf.front()->header.stamp.toSec();
+
+            LOG_F(INFO, "first_timeWheel = %16.10e"
+                        "first_curTime = %16.10e"
+                        "first_prevTime = %16.10e",
+                        timeWheel,curTime,prevTime);
+
             while(1)
             {
                 if ((!USE_WHEEL  || WheelAvailable(curTime)))
@@ -461,12 +461,10 @@ int main(int argc, char **argv)
             pcl::fromROSMsg(*fullPointsBuf.front(), *laserCloudFullRes);
             fullPointsBuf.pop();
 
-            if (USE_WHEEL){
-                getWheelInterval(prevTime, curTime, velVector, gyrVector);
-            }
+//            if (USE_WHEEL){
+//                getWheelInterval(prevTime, curTime, velVector, gyrVector);
+//            }
             mBuf.unlock();
-
-
 
             // initializing laser
             if (!systemInited)
@@ -673,12 +671,15 @@ int main(int argc, char **argv)
                             }
                         }
                     }
-
+                    problem.SetParameterBlockConstant(state_i.arr.data());
                     if ((corner_correspondence + plane_correspondence) < 10)
                     {
                         LOG_F(INFO, "less correspondence! *************************************************");
                     }
                     if (USE_WHEEL){
+                        mBuf.lock();
+                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
+                        mBuf.unlock();
                         if(!initFirstPoseFlag)
                             initFirstWheelPose(velVector);
                         for(size_t i = 0; i < velVector.size(); i++)
@@ -733,13 +734,6 @@ int main(int argc, char **argv)
             }
             prevTime = curTime;
 
-            Eigen::Matrix3d R_v2c;
-            R_v2c << 7.027555e-03, -9.999753e-01, 2.599616e-05,
-                -2.254837e-03, -4.184312e-05, -9.999975e-01,
-                9.999728e-01,  7.027479e-03, -2.255075e-03;
-            Eigen::Quaterniond q_v2c(R_v2c);
-            Eigen::Vector3d t_v2c{-7.137748e-03, -7.482656e-02, -3.336324e-01};
-            LOG_F(INFO, "I AM HERE");
             // publish odometry
             nav_msgs::Odometry laserOdometry;
             laserOdometry.header.frame_id = "/camera_init";
@@ -815,7 +809,6 @@ int main(int argc, char **argv)
                 laserCloudFullRes3.header.frame_id = "/camera";
                 pubLaserCloudFullRes.publish(laserCloudFullRes3);
             }
-
             frameCount++;
         }
         rate.sleep();
