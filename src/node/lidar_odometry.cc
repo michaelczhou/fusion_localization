@@ -130,13 +130,12 @@ void inputWheel(double t, const Eigen::Vector3d &linearVelocity, const Eigen::Ve
 }
 
 bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen::Vector3d>> &velVector,
-                                            std::vector<std::pair<double, Eigen::Vector3d>> &gyrVector){
+                      std::vector<std::pair<double, Eigen::Vector3d>> &gyrVector){
     if (velBuf.empty()){
-        LOG_F(INFO, "not receive wheel\n");
+        printf("not receive wheel\n");
         return false;
     }
 
-    //get wheelData before currFrame
     if(t1 <= velBuf.back().first)
     {
         while (velBuf.front().first <= t0)
@@ -156,7 +155,7 @@ bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen:
     }
     else
     {
-        LOG_F(INFO, "wait for wheel\n");
+        printf("wait for wheel\n");
         return false;
     }
     return true;
@@ -164,7 +163,7 @@ bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen:
 
 void initFirstWheelPose(std::vector<std::pair<double, Eigen::Vector3d>> &accVector)
 {
-    printf("init first imu pose\n");
+    printf("init first wheel pose\n");
     initFirstPoseFlag = true;
     //return;
     Eigen::Vector3d averAcc(0, 0, 0);  //hree is velocity
@@ -278,7 +277,7 @@ void wheelHandler(const geometry_msgs::TwistStampedConstPtr &wheel_msg)
     nav_msgs::Odometry wheelOdometry;
     wheelOdometry.header.frame_id = "/camera_init";
     wheelOdometry.child_frame_id = "/laser_odom";
-    wheelOdometry.header.stamp = ros::Time().fromSec(timeWheel);
+    wheelOdometry.header.stamp = ros::Time().fromSec(t);
     wheelOdometry.pose.pose.orientation.x = tmp_Q.x();
     wheelOdometry.pose.pose.orientation.y = tmp_Q.y();
     wheelOdometry.pose.pose.orientation.z = tmp_Q.z();
@@ -317,38 +316,38 @@ void wheelHandler(const geometry_msgs::TwistStampedConstPtr &wheel_msg)
 
 namespace detail {
 
-class LoggingCallback : public ceres::IterationCallback {
-public:
-    virtual ~LoggingCallback() override = default;
-    virtual ceres::CallbackReturnType operator()(
+    class LoggingCallback : public ceres::IterationCallback {
+    public:
+        virtual ~LoggingCallback() override = default;
+        virtual ceres::CallbackReturnType operator()(
             const ceres::IterationSummary& summary) override {
-        if (summary.iteration == 0) {
-            LOG_F(INFO, "[CERES  0] fn=%16.10e", summary.cost);
-            fn_old_ = summary.cost;
-            tr_radius_old_ = summary.trust_region_radius;
-        } else {
-            LOG_F(INFO,
-                    "[CERES%3d] fn=%16.10e >>>> %-16.10e "
-                    "fn+=%17.10e "
-                    "|step|=%16.10e "
-                    "step_quality=%17.10e "
-                    "tr_radius=%16.10e",
-                    summary.iteration,
-                    fn_old_, summary.cost,
-                    -summary.cost_change,
-                    summary.step_norm,
-                    summary.relative_decrease,
-                    tr_radius_old_);
-            fn_old_ = summary.cost;
-            tr_radius_old_ = summary.trust_region_radius;
+            if (summary.iteration == 0) {
+                LOG_F(INFO, "[CERES  0] fn=%16.10e", summary.cost);
+                fn_old_ = summary.cost;
+                tr_radius_old_ = summary.trust_region_radius;
+            } else {
+                LOG_F(INFO,
+                      "[CERES%3d] fn=%16.10e >>>> %-16.10e "
+                      "fn+=%17.10e "
+                      "|step|=%16.10e "
+                      "step_quality=%17.10e "
+                      "tr_radius=%16.10e",
+                      summary.iteration,
+                      fn_old_, summary.cost,
+                      -summary.cost_change,
+                      summary.step_norm,
+                      summary.relative_decrease,
+                      tr_radius_old_);
+                fn_old_ = summary.cost;
+                tr_radius_old_ = summary.trust_region_radius;
+            }
+            return ceres::SOLVER_CONTINUE;
         }
-        return ceres::SOLVER_CONTINUE;
-    }
 
-private:
-    double fn_old_ = 0.0;
-    double tr_radius_old_ = 0.0;
-};
+    private:
+        double fn_old_ = 0.0;
+        double tr_radius_old_ = 0.0;
+    };
 
 }  /* namespace detail */
 
@@ -379,7 +378,7 @@ int main(int argc, char **argv)
     ros::Subscriber subSurfPointsFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_flat", 100, laserCloudFlatHandler);
     ros::Subscriber subSurfPointsLessFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100, laserCloudLessFlatHandler);
     ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 100, laserCloudFullResHandler);
-    ros::Subscriber subWheelIntegrator = nh.subscribe<geometry_msgs::TwistStamped>("/wheel", 200, wheelHandler);//, ros::TransportHints().tcpNoDelay());
+    ros::Subscriber subWheelIntegrator = nh.subscribe<geometry_msgs::TwistStamped>("/wheel", 200, wheelHandler, ros::TransportHints().tcpNoDelay());
 
     ros::Publisher pubLaserCloudCornerLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100);
     ros::Publisher pubLaserCloudSurfLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100);
@@ -412,13 +411,12 @@ int main(int argc, char **argv)
             timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
             timeWheel = velBuf.front().first;
             curTime = fullPointsBuf.front()->header.stamp.toSec();
-
             LOG_F(INFO, "first_timeWheel = %16.10e"
                         "first_curTime = %16.10e"
                         "first_prevTime = %16.10e",
-                        timeWheel,curTime,prevTime);
+                  timeWheel,curTime,prevTime);
 
-            while(1)
+            while(USE_WHEEL)
             {
                 if ((!USE_WHEEL  || WheelAvailable(curTime)))
                     break;
@@ -461,15 +459,20 @@ int main(int argc, char **argv)
             pcl::fromROSMsg(*fullPointsBuf.front(), *laserCloudFullRes);
             fullPointsBuf.pop();
 
-//            if (USE_WHEEL){
-//                getWheelInterval(prevTime, curTime, velVector, gyrVector);
-//            }
+            if (USE_WHEEL){
+                getWheelInterval(prevTime, curTime, velVector, gyrVector);
+            }
             mBuf.unlock();
+
+
 
             // initializing laser
             if (!systemInited)
             {
                 systemInited = true;
+                state_i.arr = {1, 0, 0, 0,
+                               0, 0, 0,
+                               0, 0, 0};
                 LOG_F(INFO, "Initialization finished");
             }
             else
@@ -486,9 +489,7 @@ int main(int argc, char **argv)
                     problem.AddParameterBlock(state_i.arr.data(), 10, new loam::StateParameterization);
                     problem.AddParameterBlock(state_j.arr.data(), 10, new loam::StateParameterization);
                     LOG_F(INFO, "I AM HERE");
-//                    if(USE_WHEEL){
-//                        problem.AddParameterBlock();
-//                    }
+
                     pcl::PointXYZI pointSel;
                     std::vector<int> pointSearchInd;
                     std::vector<float> pointSearchSqDis;
@@ -511,18 +512,18 @@ int main(int argc, char **argv)
                             {
                                 // if in the same scan line, continue
                                 if (int(laserCloudCornerLast->points[j].intensity) <= closestPointScanID)
-                                    continue;
+                                continue;
 
                                 // if not in nearby scans, end the loop
                                 if (int(laserCloudCornerLast->points[j].intensity) > (closestPointScanID + NEARBY_SCAN))
-                                    break;
+                                break;
 
                                 double pointSqDis = (laserCloudCornerLast->points[j].x - pointSel.x) *
-                                                        (laserCloudCornerLast->points[j].x - pointSel.x) +
+                                                    (laserCloudCornerLast->points[j].x - pointSel.x) +
                                                     (laserCloudCornerLast->points[j].y - pointSel.y) *
-                                                        (laserCloudCornerLast->points[j].y - pointSel.y) +
+                                                    (laserCloudCornerLast->points[j].y - pointSel.y) +
                                                     (laserCloudCornerLast->points[j].z - pointSel.z) *
-                                                        (laserCloudCornerLast->points[j].z - pointSel.z);
+                                                    (laserCloudCornerLast->points[j].z - pointSel.z);
 
                                 if (pointSqDis < minPointSqDis2)
                                 {
@@ -537,18 +538,18 @@ int main(int argc, char **argv)
                             {
                                 // if in the same scan line, continue
                                 if (int(laserCloudCornerLast->points[j].intensity) >= closestPointScanID)
-                                    continue;
+                                continue;
 
                                 // if not in nearby scans, end the loop
                                 if (int(laserCloudCornerLast->points[j].intensity) < (closestPointScanID - NEARBY_SCAN))
-                                    break;
+                                break;
 
                                 double pointSqDis = (laserCloudCornerLast->points[j].x - pointSel.x) *
-                                                        (laserCloudCornerLast->points[j].x - pointSel.x) +
+                                                    (laserCloudCornerLast->points[j].x - pointSel.x) +
                                                     (laserCloudCornerLast->points[j].y - pointSel.y) *
-                                                        (laserCloudCornerLast->points[j].y - pointSel.y) +
+                                                    (laserCloudCornerLast->points[j].y - pointSel.y) +
                                                     (laserCloudCornerLast->points[j].z - pointSel.z) *
-                                                        (laserCloudCornerLast->points[j].z - pointSel.z);
+                                                    (laserCloudCornerLast->points[j].z - pointSel.z);
 
                                 if (pointSqDis < minPointSqDis2)
                                 {
@@ -570,9 +571,9 @@ int main(int argc, char **argv)
                                                          laserCloudCornerLast->points[minPointInd2].y,
                                                          laserCloudCornerLast->points[minPointInd2].z);
                             problem.AddResidualBlock(
-                                    new loam::PointEdgeFactor(curr_point.data(), last_point_a.data(), last_point_b.data()),
-                                    new ceres::HuberLoss(0.1),
-                                    state_i.arr.data(), state_j.arr.data());
+                                new loam::PointEdgeFactor(curr_point.data(), last_point_a.data(), last_point_b.data()),
+                                new ceres::HuberLoss(0.1),
+                                state_i.arr.data(), state_j.arr.data());
                             corner_correspondence++;
                         }
                     }
@@ -597,14 +598,14 @@ int main(int argc, char **argv)
                             {
                                 // if not in nearby scans, end the loop
                                 if (int(laserCloudSurfLast->points[j].intensity) > (closestPointScanID + NEARBY_SCAN))
-                                    break;
+                                break;
 
                                 double pointSqDis = (laserCloudSurfLast->points[j].x - pointSel.x) *
-                                                        (laserCloudSurfLast->points[j].x - pointSel.x) +
+                                                    (laserCloudSurfLast->points[j].x - pointSel.x) +
                                                     (laserCloudSurfLast->points[j].y - pointSel.y) *
-                                                        (laserCloudSurfLast->points[j].y - pointSel.y) +
+                                                    (laserCloudSurfLast->points[j].y - pointSel.y) +
                                                     (laserCloudSurfLast->points[j].z - pointSel.z) *
-                                                        (laserCloudSurfLast->points[j].z - pointSel.z);
+                                                    (laserCloudSurfLast->points[j].z - pointSel.z);
 
                                 // if in the same or lower scan line
                                 if (int(laserCloudSurfLast->points[j].intensity) <= closestPointScanID && pointSqDis < minPointSqDis2)
@@ -625,14 +626,14 @@ int main(int argc, char **argv)
                             {
                                 // if not in nearby scans, end the loop
                                 if (int(laserCloudSurfLast->points[j].intensity) < (closestPointScanID - NEARBY_SCAN))
-                                    break;
+                                break;
 
                                 double pointSqDis = (laserCloudSurfLast->points[j].x - pointSel.x) *
-                                                        (laserCloudSurfLast->points[j].x - pointSel.x) +
+                                                    (laserCloudSurfLast->points[j].x - pointSel.x) +
                                                     (laserCloudSurfLast->points[j].y - pointSel.y) *
-                                                        (laserCloudSurfLast->points[j].y - pointSel.y) +
+                                                    (laserCloudSurfLast->points[j].y - pointSel.y) +
                                                     (laserCloudSurfLast->points[j].z - pointSel.z) *
-                                                        (laserCloudSurfLast->points[j].z - pointSel.z);
+                                                    (laserCloudSurfLast->points[j].z - pointSel.z);
 
                                 // if in the same or higher scan line
                                 if (int(laserCloudSurfLast->points[j].intensity) >= closestPointScanID && pointSqDis < minPointSqDis2)
@@ -652,45 +653,43 @@ int main(int argc, char **argv)
                             {
 
                                 Eigen::Vector3d curr_point(surfPointsFlat->points[i].x,
-                                                            surfPointsFlat->points[i].y,
-                                                            surfPointsFlat->points[i].z);
+                                                           surfPointsFlat->points[i].y,
+                                                           surfPointsFlat->points[i].z);
                                 Eigen::Vector3d last_point_a(laserCloudSurfLast->points[closestPointInd].x,
-                                                                laserCloudSurfLast->points[closestPointInd].y,
-                                                                laserCloudSurfLast->points[closestPointInd].z);
+                                                             laserCloudSurfLast->points[closestPointInd].y,
+                                                             laserCloudSurfLast->points[closestPointInd].z);
                                 Eigen::Vector3d last_point_b(laserCloudSurfLast->points[minPointInd2].x,
-                                                                laserCloudSurfLast->points[minPointInd2].y,
-                                                                laserCloudSurfLast->points[minPointInd2].z);
+                                                             laserCloudSurfLast->points[minPointInd2].y,
+                                                             laserCloudSurfLast->points[minPointInd2].z);
                                 Eigen::Vector3d last_point_c(laserCloudSurfLast->points[minPointInd3].x,
-                                                                laserCloudSurfLast->points[minPointInd3].y,
-                                                                laserCloudSurfLast->points[minPointInd3].z);
+                                                             laserCloudSurfLast->points[minPointInd3].y,
+                                                             laserCloudSurfLast->points[minPointInd3].z);
                                 problem.AddResidualBlock(
-                                       new loam::PointPlanarFactor(curr_point.data(), last_point_a.data(), last_point_b.data(), last_point_c.data()),
-                                       new ceres::HuberLoss(0.1),
-                                       state_i.arr.data(), state_j.arr.data());
+                                    new loam::PointPlanarFactor(curr_point.data(), last_point_a.data(), last_point_b.data(), last_point_c.data()),
+                                    new ceres::HuberLoss(0.1),
+                                    state_i.arr.data(), state_j.arr.data());
                                 plane_correspondence++;
                             }
                         }
                     }
-                    problem.SetParameterBlockConstant(state_i.arr.data());
+
                     if ((corner_correspondence + plane_correspondence) < 10)
                     {
                         LOG_F(INFO, "less correspondence! *************************************************");
                     }
                     if (USE_WHEEL){
-                        mBuf.lock();
-                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
-                        mBuf.unlock();
-                        if(!initFirstPoseFlag)
-                            initFirstWheelPose(velVector);
+//                        if(!initFirstPoseFlag)
+//                            initFirstWheelPose(velVector);
                         for(size_t i = 0; i < velVector.size(); i++)
                         {
-                            wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
+                            wheels.emplace_back(curTime-prevTime, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
                                                 gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
                         }
                         Eigen::Matrix<double, 6, 1> cov;
                         cov << 1, 1, 1, 1, 1, 1;
 
                         loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
+                        LOG_F(INFO, "velVector.size() = %17.10e ", velVector.size());
                         LOG_F(INFO,
                               "wheels value = %17.10e"
                               "con = %17.10e"
@@ -701,10 +700,12 @@ int main(int argc, char **argv)
                             new loam::WheelFactor(integral_curr),
                             new ceres::HuberLoss(0.1),
                             state_i.arr.data(), state_j.arr.data());
+                        LOG_F(INFO, "I AM HERE");
                         LOG_F(INFO,
-                                  "state_i.arr.data() = %17.10e",
-                                   state_i.arr.data());
+                              "state_i.arr.data() = %17.10e",
+                              state_i.arr.data());
                     }
+
                     problem.SetParameterBlockConstant(state_i.arr.data());
                     LOG_F(INFO, "I AM HERE");
 
@@ -729,11 +730,11 @@ int main(int argc, char **argv)
                 //initialize state
                 state_i.q = state_j.q;
                 state_i.p = state_j.p;
-                state_j.p = state_j.p - state_j.q * t_last_curr;
-                state_j.q = state_j.q * q_last_curr.conjugate();
+                state_j.p = state_j.p + state_i.q * t_last_curr;
+                state_j.q = state_j.q * q_last_curr;
             }
-            prevTime = curTime;
 
+            LOG_F(INFO, "I AM HERE");
             // publish odometry
             nav_msgs::Odometry laserOdometry;
             laserOdometry.header.frame_id = "/camera_init";
@@ -809,8 +810,10 @@ int main(int argc, char **argv)
                 laserCloudFullRes3.header.frame_id = "/camera";
                 pubLaserCloudFullRes.publish(laserCloudFullRes3);
             }
+
             frameCount++;
         }
+        prevTime = curTime;
         rate.sleep();
     }
     return 0;
