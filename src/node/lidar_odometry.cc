@@ -51,13 +51,14 @@ Eigen::Quaterniond tmp_Q(1, 0, 0, 0);
 Eigen::Vector3d tmp_V;
 std::vector<std::pair<double, Eigen::Vector3d>> velVector;
 std::vector<std::pair<double, Eigen::Vector3d>> gyrVector;
+std::vector<RawWheel> wheels;
 double latest_time = 0;
 Eigen::Vector3d latest_P, latest_V, latest_vel_0, latest_gyr_0;
 Eigen::Quaterniond latest_Q;
 ros::Publisher pubWheelOdometry;
 ros::Publisher pubWheelPath;
 nav_msgs::Path wheelPath;
-bool USE_WHEEL = true;
+bool USE_WHEEL = false;
 bool pub_wheel;
 bool saveLaserOdoINI = true;
 bool saveWheelOdo = true;
@@ -132,7 +133,7 @@ void inputWheel(double t, const Eigen::Vector3d &linearVelocity, const Eigen::Ve
 bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen::Vector3d>> &velVector,
                       std::vector<std::pair<double, Eigen::Vector3d>> &gyrVector){
     if (velBuf.empty()){
-        printf("not receive wheel\n");
+        LOG_F(INFO, "not receive wheel\n");
         return false;
     }
 
@@ -152,29 +153,31 @@ bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen:
         }
         velVector.push_back(velBuf.front());
         gyrVector.push_back(gyrBuf.front());
+        LOG_F(INFO, "first velVector size = 17.10e ", velVector.size());
     }
     else
     {
-        printf("wait for wheel\n");
+        LOG_F(INFO, "wait for wheel\n");
         return false;
     }
     return true;
 }
 
-void initFirstWheelPose(std::vector<std::pair<double, Eigen::Vector3d>> &accVector)
+void initFirstWheelPose(double t0, double t1, std::vector<std::pair<double, Eigen::Vector3d>> &gryVector)
 {
-    printf("init first wheel pose\n");
+    LOG_F(INFO, "init first wheel pose\n");
     initFirstPoseFlag = true;
     //return;
-    Eigen::Vector3d averAcc(0, 0, 0);  //hree is velocity
-    int n = (int)accVector.size();
-    for(size_t i = 0; i < accVector.size(); i++)
+    Eigen::Vector3d averGry(0, 0, 0);  //hree is velocity
+    int n = (int)gryVector.size();
+    for(size_t i = 0; i < gryVector.size(); i++)
     {
-        averAcc = averAcc + accVector[i].second;
+        averGry = averGry + gryVector[i].second;
     }
-    averAcc = averAcc / n;
+    averGry = averGry / n;
 
-    state_i.p = averAcc * (accVector.front().first - accVector.back().first);
+    state_i.q = Utility::deltaQ(averGry * (t1 - t0));
+    LOG_F(INFO, "init first wheel pose = %17.10e ", state_i.q);
 //    printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
 //    Eigen::Matrix3d R0 = Utility::g2R(averAcc);
 //    double yaw = Utility::R2ypr(R0).x();
@@ -391,14 +394,15 @@ int main(int argc, char **argv)
     nav_msgs::Path laserPath;
 
     int frameCount = 0;
-    ros::Rate rate(100);
+    ros::Rate rate(10);
 
     while (ros::ok())
     {
         ros::spinOnce();
 
-        std::vector<std::pair<double, Eigen::Vector3d>> velVector, gyrVector;
-        std::vector<RawWheel> wheels;
+        velVector.clear();
+        gyrVector.clear();
+        wheels.clear();
 
         if (!cornerSharpBuf.empty() && !cornerLessSharpBuf.empty() &&
             !surfFlatBuf.empty() && !surfLessFlatBuf.empty() &&
@@ -410,7 +414,7 @@ int main(int argc, char **argv)
             timeSurfPointsLessFlat = surfLessFlatBuf.front()->header.stamp.toSec();
             timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
             timeWheel = velBuf.front().first;
-            curTime = fullPointsBuf.front()->header.stamp.toSec();
+            curTime = timeSurfPointsFlat;
             LOG_F(INFO, "first_timeWheel = %16.10e"
                         "first_curTime = %16.10e"
                         "first_prevTime = %16.10e",
@@ -459,9 +463,9 @@ int main(int argc, char **argv)
             pcl::fromROSMsg(*fullPointsBuf.front(), *laserCloudFullRes);
             fullPointsBuf.pop();
 
-            if (USE_WHEEL){
-                getWheelInterval(prevTime, curTime, velVector, gyrVector);
-            }
+//            if (USE_WHEEL){
+//                getWheelInterval(prevTime, curTime, velVector, gyrVector);
+//            }
             mBuf.unlock();
 
 
@@ -470,9 +474,9 @@ int main(int argc, char **argv)
             if (!systemInited)
             {
                 systemInited = true;
-                state_i.arr = {1, 0, 0, 0,
-                               0, 0, 0,
-                               0, 0, 0};
+//                state_i.arr = {1, 0, 0, 0,
+//                               0, 0, 0,
+//                               0, 0, 0};
                 LOG_F(INFO, "Initialization finished");
             }
             else
@@ -678,11 +682,16 @@ int main(int argc, char **argv)
                         LOG_F(INFO, "less correspondence! *************************************************");
                     }
                     if (USE_WHEEL){
-//                        if(!initFirstPoseFlag)
-//                            initFirstWheelPose(velVector);
+                        mBuf.lock();
+                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
+                        mBuf.unlock();
+                        if(!initFirstPoseFlag)
+                            initFirstWheelPose(prevTime,curTime,gyrVector);
+                        LOG_F(INFO, "velVector.size() = %17.10e ", velVector.size());
                         for(size_t i = 0; i < velVector.size(); i++)
                         {
-                            wheels.emplace_back(curTime-prevTime, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
+                            LOG_F(INFO, "velVector.size() = %17.10e ", velVector.size());
+                            wheels.emplace_back(curTime - prevTime, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
                                                 gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
                         }
                         Eigen::Matrix<double, 6, 1> cov;
