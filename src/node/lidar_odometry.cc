@@ -19,11 +19,13 @@
 #include <mutex>
 #include <condition_variable>
 #include <fstream>
-
+#include <cstring>
+#include <string>
 
 #include <loguru.hpp>
 
 #include "../estimation/lidar_factor.hpp"
+
 #include "../estimation/state_parameterization.hpp"
 #include "../estimation/wheel_factor.hpp"
 #include "../estimation/wheel_integrator.hpp"
@@ -58,7 +60,7 @@ Eigen::Quaterniond latest_Q;
 ros::Publisher pubWheelOdometry;
 ros::Publisher pubWheelPath;
 nav_msgs::Path wheelPath;
-bool USE_WHEEL = false;
+bool USE_WHEEL = true;
 bool pub_wheel;
 bool saveLaserOdoINI = true;
 bool saveWheelOdo = true;
@@ -153,7 +155,6 @@ bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen:
         }
         velVector.push_back(velBuf.front());
         gyrVector.push_back(gyrBuf.front());
-        LOG_F(INFO, "first velVector size = 17.10e ", velVector.size());
     }
     else
     {
@@ -177,7 +178,6 @@ void initFirstWheelPose(double t0, double t1, std::vector<std::pair<double, Eige
     averGry = averGry / n;
 
     state_i.q = Utility::deltaQ(averGry * (t1 - t0));
-    LOG_F(INFO, "init first wheel pose = %17.10e ", state_i.q);
 //    printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
 //    Eigen::Matrix3d R0 = Utility::g2R(averAcc);
 //    double yaw = Utility::R2ypr(R0).x();
@@ -415,9 +415,9 @@ int main(int argc, char **argv)
             timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
             timeWheel = velBuf.front().first;
             curTime = timeSurfPointsFlat;
-            LOG_F(INFO, "first_timeWheel = %16.10e"
-                        "first_curTime = %16.10e"
-                        "first_prevTime = %16.10e",
+            LOG_F(INFO, "first_timeWheel = %11.5f"
+                        "first_curTime = %11.5f"
+                        "first_prevTime = %11.5f",
                   timeWheel,curTime,prevTime);
 
             while(USE_WHEEL)
@@ -492,7 +492,6 @@ int main(int argc, char **argv)
                     ceres::Problem problem;
                     problem.AddParameterBlock(state_i.arr.data(), 10, new loam::StateParameterization);
                     problem.AddParameterBlock(state_j.arr.data(), 10, new loam::StateParameterization);
-                    LOG_F(INFO, "I AM HERE");
 
                     pcl::PointXYZI pointSel;
                     std::vector<int> pointSearchInd;
@@ -687,36 +686,25 @@ int main(int argc, char **argv)
                         mBuf.unlock();
                         if(!initFirstPoseFlag)
                             initFirstWheelPose(prevTime,curTime,gyrVector);
-                        LOG_F(INFO, "velVector.size() = %17.10e ", velVector.size());
                         for(size_t i = 0; i < velVector.size(); i++)
                         {
-                            LOG_F(INFO, "velVector.size() = %17.10e ", velVector.size());
-                            wheels.emplace_back(curTime - prevTime, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
+                            wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
                                                 gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
                         }
                         Eigen::Matrix<double, 6, 1> cov;
                         cov << 1, 1, 1, 1, 1, 1;
 
+                        if (wheels.size() < 2)
+                            exit(0);
                         loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
-                        LOG_F(INFO, "velVector.size() = %17.10e ", velVector.size());
-                        LOG_F(INFO,
-                              "wheels value = %17.10e"
-                              "con = %17.10e"
-                              "state_i.arr.data() = %17.10e"
-                              "integral_curr = %17.10e",
-                              wheels,cov,state_i.arr.data(),integral_curr);
+
                         problem.AddResidualBlock(
                             new loam::WheelFactor(integral_curr),
                             new ceres::HuberLoss(0.1),
                             state_i.arr.data(), state_j.arr.data());
-                        LOG_F(INFO, "I AM HERE");
-                        LOG_F(INFO,
-                              "state_i.arr.data() = %17.10e",
-                              state_i.arr.data());
                     }
 
                     problem.SetParameterBlockConstant(state_i.arr.data());
-                    LOG_F(INFO, "I AM HERE");
 
                     detail::LoggingCallback callback;
                     ceres::Solver::Options options;
@@ -725,14 +713,13 @@ int main(int argc, char **argv)
                     options.max_num_iterations = 4;
                     options.minimizer_progress_to_stdout = false;
                     ceres::Solver::Summary summary;
-                    LOG_F(INFO, "I AM HERE");
+                    //LOG_F(INFO, "I AM HERE");
                     ceres::Solve(options, &problem, &summary);
                     LOG_S(INFO) << summary.BriefReport();
-                    LOG_F(INFO, "I AM HERE");
+                    //LOG_F(INFO, "I AM HERE");
                     q_last_curr = state_i.q.conjugate() * state_j.q;
                     t_last_curr = state_i.q.conjugate() * (state_j.p - state_i.p);
                 }
-                LOG_F(INFO, "I AM HERE");
                 q_w_curr = state_j.q;
                 t_w_curr = state_j.p;
 
@@ -743,7 +730,6 @@ int main(int argc, char **argv)
                 state_j.q = state_j.q * q_last_curr;
             }
 
-            LOG_F(INFO, "I AM HERE");
             // publish odometry
             nav_msgs::Odometry laserOdometry;
             laserOdometry.header.frame_id = "/camera_init";
