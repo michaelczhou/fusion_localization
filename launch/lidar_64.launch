@@ -15,7 +15,7 @@
 
     <arg name="rviz" default="true" />
     <group if="$(arg rviz)">
-        <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find fusion_localization)/config/lidar_64.rviz" />
+        <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find fusion_localization_zc)/config/lidar_64.rviz" />
     </group>
 </launch>
 
