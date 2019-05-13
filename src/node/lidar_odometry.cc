@@ -483,8 +483,11 @@ int main(int argc, char **argv)
             {
                 int cornerPointsSharpNum = cornerPointsSharp->points.size();
                 int surfPointsFlatNum = surfPointsFlat->points.size();
+                LOG_F(INFO, "cornerPointsSharpNum = %d "
+                            "surfPointFlatNum = %d ",
+                            cornerPointsSharpNum, surfPointsFlatNum);
 
-                for (size_t opti_counter = 0; opti_counter < 2; ++opti_counter)
+                for (size_t opti_counter = 0; opti_counter < 1; ++opti_counter)
                 {
                     corner_correspondence = 0;
                     plane_correspondence = 0;
@@ -496,6 +499,33 @@ int main(int argc, char **argv)
                     pcl::PointXYZI pointSel;
                     std::vector<int> pointSearchInd;
                     std::vector<float> pointSearchSqDis;
+
+                    if (USE_WHEEL){
+                        mBuf.lock();
+                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
+                        mBuf.unlock();
+                        if(!initFirstPoseFlag)
+                            initFirstWheelPose(prevTime,curTime,gyrVector);
+                        for(size_t i = 0; i < velVector.size(); i++)
+                        {
+                            wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
+                                                gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
+                        }
+                        Eigen::Matrix<double, 6, 1> cov;
+                        cov << 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005;
+
+                        if (wheels.size() < 2)
+                            exit(0);
+                        loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
+                        //initialize state
+                        state_j.p = state_i.q * integral_curr.mean.p + state_i.p;
+                        state_j.q = state_i.q * integral_curr.mean.q;
+
+                        problem.AddResidualBlock(
+                            new loam::WheelFactor(integral_curr),
+                            new ceres::HuberLoss(0.1),
+                            state_i.arr.data(), state_j.arr.data());
+                    }
 
                     // find correspondence for corner features
                     for (int i = 0; i < cornerPointsSharpNum; ++i)
@@ -680,29 +710,7 @@ int main(int argc, char **argv)
                     {
                         LOG_F(INFO, "less correspondence! *************************************************");
                     }
-                    if (USE_WHEEL){
-                        mBuf.lock();
-                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
-                        mBuf.unlock();
-//                        if(!initFirstPoseFlag)
-//                            initFirstWheelPose(prevTime,curTime,gyrVector);
-                        for(size_t i = 0; i < velVector.size(); i++)
-                        {
-                            wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
-                                                gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
-                        }
-                        Eigen::Matrix<double, 6, 1> cov;
-                        cov << 0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001;
 
-                        if (wheels.size() < 2)
-                            exit(0);
-                        loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
-
-                        problem.AddResidualBlock(
-                            new loam::WheelFactor(integral_curr),
-                            new ceres::HuberLoss(0.1),
-                            state_i.arr.data(), state_j.arr.data());
-                    }
 
                     problem.SetParameterBlockConstant(state_i.arr.data());
 
@@ -726,8 +734,8 @@ int main(int argc, char **argv)
                 //initialize state
                 state_i.q = state_j.q;
                 state_i.p = state_j.p;
-                state_j.p = state_j.p + state_i.q * t_last_curr;
-                state_j.q = state_j.q * q_last_curr;
+//                state_j.p = state_j.p + state_i.q * t_last_curr;
+//                state_j.q = state_j.q * q_last_curr;
             }
 
             // publish odometry
