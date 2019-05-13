@@ -27,6 +27,8 @@
 
 int frameCount = 0;
 
+bool saveAftMapped = true;
+
 double timeLaserCloudCornerLast = 0;
 double timeLaserCloudSurfLast = 0;
 double timeLaserCloudFullRes = 0;
@@ -762,6 +764,24 @@ void process()
 			odomAftMapped.pose.pose.position.y = t_w_curr.y();
 			odomAftMapped.pose.pose.position.z = t_w_curr.z();
 			pubOdomAftMapped.publish(odomAftMapped);
+
+			// write result to file
+			if (saveAftMapped) {
+				std::ofstream founL("/home/zhouchang/catkin_zc/src/fusion_localization/results/aft_mapped.txt",
+									std::ios::app);
+				founL.setf(std::ios::fixed, std::ios::floatfield);
+				founL.precision(5);
+				founL << odomAftMapped.header.stamp.toSec() << " ";
+				founL.precision(5);
+				founL << odomAftMapped.pose.pose.position.x << " "
+					  << odomAftMapped.pose.pose.position.y << " "
+					  << odomAftMapped.pose.pose.position.z << " "
+					  << odomAftMapped.pose.pose.orientation.x << " "
+					  << odomAftMapped.pose.pose.orientation.y << " "
+					  << odomAftMapped.pose.pose.orientation.z << " "
+					  << odomAftMapped.pose.pose.orientation.w << std::endl;
+				founL.close();
+			}
 
 			geometry_msgs::PoseStamped laserAfterMappedPose;
 			laserAfterMappedPose.header = odomAftMapped.header;

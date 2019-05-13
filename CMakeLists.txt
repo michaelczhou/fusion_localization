@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(fusion_localization LANGUAGES C CXX)
+project(fusion_localization_zc LANGUAGES C CXX)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 set(EXTERNAL_PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external)

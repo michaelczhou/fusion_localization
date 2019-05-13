@@ -299,7 +299,7 @@ void wheelHandler(const geometry_msgs::TwistStampedConstPtr &wheel_msg)
     pubWheelPath.publish(wheelPath);
 
     if (saveWheelOdo) {
-        std::ofstream founW("/home/zhouchang/catkin_fb/src/fusion_localization/results/wheel_odo.txt",
+        std::ofstream founW("/home/zhouchang/catkin_zc/src/fusion_localization/results/wheel_odo.txt",
                             std::ios::app);
         founW.setf(std::ios::fixed, std::ios::floatfield);
         founW.precision(5);
@@ -684,15 +684,15 @@ int main(int argc, char **argv)
                         mBuf.lock();
                         getWheelInterval(prevTime, curTime, velVector, gyrVector);
                         mBuf.unlock();
-                        if(!initFirstPoseFlag)
-                            initFirstWheelPose(prevTime,curTime,gyrVector);
+//                        if(!initFirstPoseFlag)
+//                            initFirstWheelPose(prevTime,curTime,gyrVector);
                         for(size_t i = 0; i < velVector.size(); i++)
                         {
                             wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
                                                 gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
                         }
                         Eigen::Matrix<double, 6, 1> cov;
-                        cov << 1, 1, 1, 1, 1, 1;
+                        cov << 0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001;
 
                         if (wheels.size() < 2)
                             exit(0);
@@ -710,7 +710,7 @@ int main(int argc, char **argv)
                     ceres::Solver::Options options;
                     options.callbacks.push_back(&callback);
                     options.linear_solver_type = ceres::DENSE_QR;
-                    options.max_num_iterations = 4;
+                    options.max_num_iterations = 7;
                     options.minimizer_progress_to_stdout = false;
                     ceres::Solver::Summary summary;
                     //LOG_F(INFO, "I AM HERE");
@@ -754,8 +754,8 @@ int main(int argc, char **argv)
 
             // write result to file
             if (saveLaserOdoINI) {
-                std::ofstream founL("/home/zhouchang/catkin_fb/src/fusion_localization/results/laserWheelOdo.txt",
-                                    std::ios::app);
+                //std::ofstream founL("/home/zhouchang/catkin_fb/src/fusion_localization/results/laserWheelOdo.txt", std::ios::app);
+                std::ofstream founL("/home/zhouchang/catkin_zc/src/fusion_localization/results/laserOdo.txt", std::ios::app);
                 founL.setf(std::ios::fixed, std::ios::floatfield);
                 founL.precision(5);
                 founL << laserOdometry.header.stamp.toSec() << " ";

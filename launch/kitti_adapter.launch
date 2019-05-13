@@ -1,7 +1,7 @@
 <launch>
 
 
-    <node name="kittiAdapter" pkg="fusion_localization" type="kittiAdapter" output="screen">
+    <node name="kittiAdapter" pkg="fusion_localization_zc" type="kittiAdapter" output="screen">
         <param name="dataset_folder" type="string" value="/media/zhouchang/data/kitti/raw_data/2011_09_30_drive_0027_extract" />
         <!--param name="sequence_number" type="string" value="00" /-->
         <param name="calib_folder" type="string" value="/media/zhouchang/data/kitti/raw_data/2011_09_30_drive_0027_extract" />

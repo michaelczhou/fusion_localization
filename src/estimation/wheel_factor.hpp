@@ -18,15 +18,15 @@ namespace loam {
     class WheelFactor : public ceres::SizedCostFunction<9, 10, 10> {
     public:
         WheelFactor(const WheelIntegral& integral)
-            : integral_(integral)
+                : integral_(integral)
         { }
 
         virtual ~WheelFactor() override = default;
 
         virtual bool Evaluate(
-            double const* const* two_states,
-            double* residual,
-            double** jacobians) const override {
+                double const* const* two_states,
+                double* residual,
+                double** jacobians) const override {
             using Eigen::Map;
             using Eigen::Quaterniond;
             using Eigen::Vector3d;

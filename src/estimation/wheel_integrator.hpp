@@ -46,8 +46,8 @@ namespace loam {
             if (this != &other) {
                 t = other.t;
                 arr = other.arr;
-                new (&w) Eigen::Map<Eigen::Vector3d const>(arr.data() + 0);
-                new (&v) Eigen::Map<Eigen::Vector3d const>(arr.data() + 3);
+                new (&v) Eigen::Map<Eigen::Vector3d const>(arr.data() + 0);
+                new (&w) Eigen::Map<Eigen::Vector3d const>(arr.data() + 3);
             }
             return (*this);
         }
@@ -55,8 +55,8 @@ namespace loam {
         double t = 0.0;
         std::array<double, 6> arr = { {0.0} };
 
-        Eigen::Map<Eigen::Vector3d const> w = Eigen::Map<Eigen::Vector3d const>(arr.data() + 0);
-        Eigen::Map<Eigen::Vector3d const> v = Eigen::Map<Eigen::Vector3d const>(arr.data() + 3);
+        Eigen::Map<Eigen::Vector3d const> v = Eigen::Map<Eigen::Vector3d const>(arr.data() + 0);
+        Eigen::Map<Eigen::Vector3d const> w = Eigen::Map<Eigen::Vector3d const>(arr.data() + 3);
     };
 
     inline std::ostream& operator<<(std::ostream& os, const RawWheel& wheel_reading) {
