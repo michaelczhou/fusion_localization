@@ -201,8 +201,8 @@ bool KITTIAdapter::NextVelodyne() {
     on_next_velodyne_(
             data.data(),
             data.size(),
-            oxts_ts_.front().second,
-            oxts_ts_.front().nanosecond);
+            velodyne_ts_.front().second,
+            velodyne_ts_.front().nanosecond);
 
     ++velodyne_cursor_;
     velodyne_ts_.pop();
