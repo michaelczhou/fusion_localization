@@ -19,13 +19,17 @@
 #include <mutex>
 #include <condition_variable>
 #include <fstream>
-#include <cstring>
-#include <string>
 
-#include <loguru.hpp>
+#include "../../external/loguru.hpp"
+
+//roadstar msg
+#include "modules/msgs/canbus/proto/chassis.pb.h"
+//#include "modules/msgs/drivers/gnss/proto/ins.pb.h"
+#include "modules/msgs/drivers/novatel/proto/imu.pb.h"
+//#include "modules/msgs/drivers/novatel/proto/ins.pb.h"
+//#include "modules/msgs/drivers/novatel/proto/imu.pb.h"
 
 #include "../estimation/lidar_factor.hpp"
-
 #include "../estimation/state_parameterization.hpp"
 #include "../estimation/wheel_factor.hpp"
 #include "../estimation/wheel_integrator.hpp"
@@ -47,6 +51,7 @@ std::mutex m_buf; // process conflict of imu_buf and laser
 std::mutex m_state; // process conflict of multiOdo (tmp_P、tmp_Q、tmp_V)
 bool init_wheel = 1;
 double last_wheel_t = 0;
+double last_imu_t = 0;
 
 Eigen::Vector3d tmp_P;
 Eigen::Quaterniond tmp_Q(1, 0, 0, 0);
@@ -55,8 +60,10 @@ std::vector<std::pair<double, Eigen::Vector3d>> velVector;
 std::vector<std::pair<double, Eigen::Vector3d>> gyrVector;
 std::vector<RawWheel> wheels;
 double latest_time = 0;
-Eigen::Vector3d latest_P, latest_V, latest_vel_0, latest_gyr_0;
+Eigen::Vector3d latest_P, latest_V, latest_Ba, latest_Bg, latest_vel_0, latest_acc_0, latest_gyr_0;
+Eigen::Vector3d g{0.0, 0.0, 9.8};
 Eigen::Quaterniond latest_Q;
+ros::Publisher pub_imu_odometry;
 ros::Publisher pubWheelOdometry;
 ros::Publisher pubWheelPath;
 nav_msgs::Path wheelPath;
@@ -65,6 +72,7 @@ bool pub_wheel;
 bool saveLaserOdoINI = true;
 bool saveWheelOdo = true;
 bool initFirstPoseFlag;
+bool fastIngeralIMU = false;
 
 double prevTime = 0;
 double curTime = 0;
@@ -111,50 +119,118 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> cornerLessSharpBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> surfFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> surfLessFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> fullPointsBuf;
-std::queue<std::pair<double, Eigen::Vector3d>> velBuf;
+std::queue<std::pair<double, Eigen::Vector3d>> accBuf;
 std::queue<std::pair<double, Eigen::Vector3d>> gyrBuf;
+std::queue<std::pair<double, Eigen::Vector3d>> w_velBuf;
+std::queue<std::pair<double, Eigen::Vector3d>> w_gyrBuf;
 std::mutex mBuf;
 
 bool WheelAvailable(double t)
 {
-    if(!velBuf.empty() && t <= velBuf.back().first)
+    if(!w_velBuf.empty() && t <= w_velBuf.back().first)
         return true;
     else
         return false;
 }
 
+void fastPredictIMU(double t, Eigen::Vector3d linear_acceleration, Eigen::Vector3d angular_velocity)
+{
+    double dt = t - latest_time;
+    latest_time = t;
+    Eigen::Vector3d un_acc_0 = latest_Q * (latest_acc_0 - latest_Ba) - g;
+    Eigen::Vector3d un_gyr = 0.5 * (latest_gyr_0 + angular_velocity) - latest_Bg;
+    latest_Q = latest_Q * Utility::deltaQ(un_gyr * dt);
+    Eigen::Vector3d un_acc_1 = latest_Q * (linear_acceleration - latest_Ba) - g;
+    Eigen::Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
+    latest_P = latest_P + dt * latest_V + 0.5 * dt * dt * un_acc;
+    latest_V = latest_V + dt * un_acc;
+    latest_acc_0 = linear_acceleration;
+    latest_gyr_0 = angular_velocity;
+}
+
+void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, double t)
+{
+    nav_msgs::Odometry odometry;
+    odometry.header.stamp = ros::Time(t);
+    odometry.header.frame_id = "world";
+    odometry.pose.pose.position.x = P.x();
+    odometry.pose.pose.position.y = P.y();
+    odometry.pose.pose.position.z = P.z();
+    odometry.pose.pose.orientation.x = Q.x();
+    odometry.pose.pose.orientation.y = Q.y();
+    odometry.pose.pose.orientation.z = Q.z();
+    odometry.pose.pose.orientation.w = Q.w();
+    odometry.twist.twist.linear.x = V.x();
+    odometry.twist.twist.linear.y = V.y();
+    odometry.twist.twist.linear.z = V.z();
+    pub_imu_odometry.publish(odometry);
+}
+
+
 void inputWheel(double t, const Eigen::Vector3d &linearVelocity, const Eigen::Vector3d &angularVelocity)
 {
     mBuf.lock();
-    velBuf.push(std::make_pair(t, linearVelocity));
-    gyrBuf.push(std::make_pair(t, angularVelocity));
+    w_velBuf.push(std::make_pair(t, linearVelocity));
+    w_gyrBuf.push(std::make_pair(t, angularVelocity));
     mBuf.unlock();
     //con.notify_one();
 }
 
+void inputIMU(double t, const Eigen::Vector3d &acc, const Eigen::Vector3d &gry){
+    mBuf.lock();
+    accBuf.push(std::make_pair(t, acc));
+    gyrBuf.push(std::make_pair(t, gry));
+    //printf("input imu with time %f \n", t);
+    mBuf.unlock();
+
+//    fastPredictIMU(t, acc, gry);
+//    if (fastIngeralIMU)
+//        pubLatestOdometry(latest_P, latest_Q, latest_V, t);
+}
+
 bool getWheelInterval(double t0, double t1, std::vector<std::pair<double, Eigen::Vector3d>> &velVector,
                       std::vector<std::pair<double, Eigen::Vector3d>> &gyrVector){
-    if (velBuf.empty()){
+    if (w_velBuf.empty()){
         LOG_F(INFO, "not receive wheel\n");
         return false;
     }
 
-    if(t1 <= velBuf.back().first)
+    if (t1 < accBuf.back().first && !accBuf.empty())
     {
-        while (velBuf.front().first <= t0)
-        {
-            velBuf.pop();
+        while (accBuf.front().first <= t0){
+            accBuf.pop();
             gyrBuf.pop();
         }
-        while (velBuf.front().first < t1)
+        LOG_F(INFO, "I am Here\n");
+    }
+
+    if(t1 <= w_velBuf.back().first)
+    {
+        while (w_velBuf.front().first <= t0)
         {
-            velVector.push_back(velBuf.front());
-            velBuf.pop();
-            gyrVector.push_back(gyrBuf.front());
+            w_velBuf.pop();
+            w_gyrBuf.pop();
+        }
+        LOG_F(INFO, "I am Here\n");
+        while (w_velBuf.front().first < t1)
+        {
+            velVector.push_back(w_velBuf.front());
+            w_velBuf.pop();
+            w_gyrBuf.front().second = gyrBuf.front().second;
+            gyrVector.push_back(w_gyrBuf.front());
+            w_gyrBuf.pop();
+            accBuf.pop();
             gyrBuf.pop();
         }
-        velVector.push_back(velBuf.front());
+        velVector.push_back(w_velBuf.front());
         gyrVector.push_back(gyrBuf.front());
+        LOG_F(INFO, "I am Here\n");
+        while(accBuf.front().first <= t1){
+            accBuf.pop();
+            gyrBuf.pop();
+        }
+        LOG_F(INFO, "first velVector size = %d ", velVector.size());
+        LOG_F(INFO, "first gyrVector size = %d ", gyrVector.size());
     }
     else
     {
@@ -171,13 +247,13 @@ void initFirstWheelPose(double t0, double t1, std::vector<std::pair<double, Eige
     //return;
     Eigen::Vector3d averGry(0, 0, 0);  //hree is velocity
     int n = (int)gryVector.size();
-    for(size_t i = 0; i < gryVector.size(); i++)
-    {
-        averGry = averGry + gryVector[i].second;
+    for (auto &i : gryVector) {
+        averGry = averGry + i.second;
     }
     averGry = averGry / n;
 
     state_i.q = Utility::deltaQ(averGry * (t1 - t0));
+//    LOG_F(INFO, "init first wheel pose = %17.10e ", state_i.q);
 //    printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
 //    Eigen::Matrix3d R0 = Utility::g2R(averAcc);
 //    double yaw = Utility::R2ypr(R0).x();
@@ -196,7 +272,7 @@ void TransformToStart(pcl::PointXYZI const *const pi, pcl::PointXYZI *const po)
     Eigen::Quaterniond q_point_last = Eigen::Quaterniond::Identity().slerp(s, q_last_curr);
     Eigen::Vector3d t_point_last = s * t_last_curr;
     Eigen::Vector3d point(pi->x, pi->y, pi->z);
-    Eigen::Vector3d un_point = q_point_last * point + t_point_last;
+    Eigen::Vector3d un_point = q_point_last * point + t_point_laslt;
 
     po->x = un_point.x();
     po->y = un_point.y();
@@ -206,28 +282,28 @@ void TransformToStart(pcl::PointXYZI const *const pi, pcl::PointXYZI *const po)
 
 // transform all lidar points to the start of the next frame
 
-void laserCloudSharpHandler(const sensor_msgs::PointCloud2ConstPtr &cornerPointsSharp2)
+void laserCloudSharpHandler(const sensor_msgs::PointCloud2ConstPtr cornerPointsSharp2)
 {
     mBuf.lock();
     cornerSharpBuf.push(cornerPointsSharp2);
     mBuf.unlock();
 }
 
-void laserCloudLessSharpHandler(const sensor_msgs::PointCloud2ConstPtr &cornerPointsLessSharp2)
+void laserCloudLessSharpHandler(const sensor_msgs::PointCloud2ConstPtr cornerPointsLessSharp2)
 {
     mBuf.lock();
     cornerLessSharpBuf.push(cornerPointsLessSharp2);
     mBuf.unlock();
 }
 
-void laserCloudFlatHandler(const sensor_msgs::PointCloud2ConstPtr &surfPointsFlat2)
+void laserCloudFlatHandler(const sensor_msgs::PointCloud2ConstPtr surfPointsFlat2)
 {
     mBuf.lock();
     surfFlatBuf.push(surfPointsFlat2);
     mBuf.unlock();
 }
 
-void laserCloudLessFlatHandler(const sensor_msgs::PointCloud2ConstPtr &surfPointsLessFlat2)
+void laserCloudLessFlatHandler(const sensor_msgs::PointCloud2ConstPtr surfPointsLessFlat2)
 {
     mBuf.lock();
     surfLessFlatBuf.push(surfPointsLessFlat2);
@@ -235,87 +311,135 @@ void laserCloudLessFlatHandler(const sensor_msgs::PointCloud2ConstPtr &surfPoint
 }
 
 //receive all point cloud
-void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudFullRes2)
+void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr laserCloudFullRes2)
 {
+    //std::cout << "Got" << std::endl;
     mBuf.lock();
     fullPointsBuf.push(laserCloudFullRes2);
     mBuf.unlock();
 }
 
-void wheelHandler(const geometry_msgs::TwistStampedConstPtr &wheel_msg)
+void wheelHandler(const boost::shared_ptr<const roadstar::canbus::Chassis> wheel_msg)
 {
     using Eigen::Vector3d;
 
-    if (wheel_msg->header.stamp.toSec() <= last_wheel_t)
+    if (wheel_msg->header().timestamp_sec() <= last_wheel_t)
     {
         ROS_WARN("wheel message in disorder!");
         return;
     }
 
-    double t  = wheel_msg->header.stamp.toSec();
+    double t  = wheel_msg->header().timestamp_sec();
     last_wheel_t = t;
-    double vx = wheel_msg->twist.linear.x;
-    double vy = wheel_msg->twist.linear.y;
-    double vz = wheel_msg->twist.linear.z;
-    double rx = wheel_msg->twist.angular.x;
-    double ry = wheel_msg->twist.angular.y;
-    double rz = wheel_msg->twist.angular.z;
+    double vx = wheel_msg->front_axle_speed() / 3.6;
+    double vy = 0.0;
+    double vz = 0.0;
+    double rx = 0.0;
+    double ry = 0.0;
+    double rz = 0.0;
+    //LOG_F(INFO, "wheel_vx = %f\n", vx);
     Vector3d vel(vx, vy, vz);
     Vector3d gyr(rx, ry, rz);
     inputWheel(t, vel, gyr);
 
-    if (init_wheel)
-    {
-        latest_time = t;
-        init_wheel = 0;
+    return ;
+}
+
+void imuHandler(const boost::shared_ptr<const roadstar::drivers::gnss::Imu> imu_msg){
+    using Eigen::Vector3d;
+    if (imu_msg->header().timestamp_sec() <= last_imu_t) {
+        ROS_WARN("IMU msg in disorder!");
         return;
     }
-    double dt = t - latest_time;
-    latest_time = t;
+    last_imu_t = imu_msg->header().timestamp_sec();
 
-    tmp_Q = tmp_Q * Utility::deltaQ(gyr * dt);
-    tmp_P = tmp_P + tmp_Q.toRotationMatrix() * vel * dt;
-    tmp_V = vel;
-
-    nav_msgs::Odometry wheelOdometry;
-    wheelOdometry.header.frame_id = "/camera_init";
-    wheelOdometry.child_frame_id = "/laser_odom";
-    wheelOdometry.header.stamp = ros::Time().fromSec(t);
-    wheelOdometry.pose.pose.orientation.x = tmp_Q.x();
-    wheelOdometry.pose.pose.orientation.y = tmp_Q.y();
-    wheelOdometry.pose.pose.orientation.z = tmp_Q.z();
-    wheelOdometry.pose.pose.orientation.w = tmp_Q.w();
-    wheelOdometry.pose.pose.position.x = tmp_P.x();
-    wheelOdometry.pose.pose.position.y = tmp_P.y();
-    wheelOdometry.pose.pose.position.z = tmp_P.z();
-    pubWheelOdometry.publish(wheelOdometry);
-
-    geometry_msgs::PoseStamped wheelPose;
-    wheelPose.header = wheelOdometry.header;
-    wheelPose.pose = wheelOdometry.pose.pose;
-    wheelPath.header.stamp = wheelOdometry.header.stamp;
-    wheelPath.poses.push_back(wheelPose);
-    wheelPath.header.frame_id = "/camera_init";
-    pubWheelPath.publish(wheelPath);
-
-    if (saveWheelOdo) {
-        std::ofstream founW("/home/zhouchang/catkin_zc/src/fusion_localization/results/wheel_odo.txt",
-                            std::ios::app);
-        founW.setf(std::ios::fixed, std::ios::floatfield);
-        founW.precision(5);
-        founW << wheelOdometry.header.stamp.toSec() << " ";
-        founW.precision(5);
-        founW << wheelOdometry.pose.pose.position.x << " "
-              << wheelOdometry.pose.pose.position.y << " "
-              << wheelOdometry.pose.pose.position.z << " "
-              << wheelOdometry.pose.pose.orientation.x << " "
-              << wheelOdometry.pose.pose.orientation.y << " "
-              << wheelOdometry.pose.pose.orientation.z << " "
-              << wheelOdometry.pose.pose.orientation.w << std::endl;
-        founW.close();
-    }
+    double t  = imu_msg->header().timestamp_sec();
+    double dx = imu_msg->linear_acceleration().x();
+    double dy = imu_msg->linear_acceleration().y();
+    double dz = imu_msg->linear_acceleration().z();
+    double rx = imu_msg->angular_velocity().x();
+    double ry = imu_msg->angular_velocity().y();
+    double rz = imu_msg->angular_velocity().z();
+    //LOG_F(INFO, "imu w = %f\n",rx);
+    Vector3d acc(dx, dy, dz);
+    Vector3d gyr(rx, ry, rz);
+    inputIMU(t, acc, gyr);
     return;
 }
+//void imu_Handler(const boost::shared_ptr<const roadstar::drivers::gnss::GnssIns> imu_msg)
+//{
+//    using Eigen::Vector3d;
+//
+//    if (wheel_msg->header().timestamp_sec() <= last_wheel_t)
+//    {
+//        ROS_WARN("wheel message in disorder!");
+//        return;
+//    }
+//
+//    double t  = wheel_msg->header().timestamp_sec();
+//    last_wheel_t = t;
+//    double vx = wheel_msg->linear_velocity().x();
+//    double vy = wheel_msg->linear_velocity().y();
+//    double vz = wheel_msg->linear_velocity().z();
+//    double rx = wheel_msg->angular_velocity().x();
+//    double ry = wheel_msg->angular_velocity().y();
+//    double rz = wheel_msg->angular_velocity().z();
+//    Vector3d vel(vx, vy, vz);
+//    Vector3d gyr(rx, ry, rz);
+//    inputWheel(t, vel, gyr);
+//
+//    if (init_wheel)
+//    {
+//        latest_time = t;
+//        init_wheel = 0;
+//        return;
+//    }
+//    double dt = t - latest_time;
+//    latest_time = t;
+//
+//    tmp_Q = tmp_Q * Utility::deltaQ(gyr * dt);
+//    tmp_P = tmp_P + tmp_Q.toRotationMatrix() * vel * dt;
+//    tmp_V = vel;
+//
+//    nav_msgs::Odometry wheelOdometry;
+//    wheelOdometry.header.frame_id = "/camera_init";
+//    wheelOdometry.child_frame_id = "/laser_odom";
+//    wheelOdometry.header.stamp = ros::Time().fromSec(t);
+//    wheelOdometry.pose.pose.orientation.x = tmp_Q.x();
+//    wheelOdometry.pose.pose.orientation.y = tmp_Q.y();
+//    wheelOdometry.pose.pose.orientation.z = tmp_Q.z();
+//    wheelOdometry.pose.pose.orientation.w = tmp_Q.w();
+//    wheelOdometry.pose.pose.position.x = tmp_P.x();
+//    wheelOdometry.pose.pose.position.y = tmp_P.y();
+//    wheelOdometry.pose.pose.position.z = tmp_P.z();
+//    pubWheelOdometry.publish(wheelOdometry);
+//
+//    geometry_msgs::PoseStamped wheelPose;
+//    wheelPose.header = wheelOdometry.header;
+//    wheelPose.pose = wheelOdometry.pose.pose;
+//    wheelPath.header.stamp = wheelOdometry.header.stamp;
+//    wheelPath.poses.push_back(wheelPose);
+//    wheelPath.header.frame_id = "/camera_init";
+//    pubWheelPath.publish(wheelPath);
+//
+//    if (saveWheelOdo) {
+//        std::ofstream founW("/roadstar/modules/fusion_localization/results/wheel_odo.txt",
+//                            std::ios::app);
+//        founW.setf(std::ios::fixed, std::ios::floatfield);
+//        founW.precision(5);
+//        founW << wheelOdometry.header.stamp.toSec() << " ";
+//        founW.precision(5);
+//        founW << wheelOdometry.pose.pose.position.x << " "
+//              << wheelOdometry.pose.pose.position.y << " "
+//              << wheelOdometry.pose.pose.position.z << " "
+//              << wheelOdometry.pose.pose.orientation.x << " "
+//              << wheelOdometry.pose.pose.orientation.y << " "
+//              << wheelOdometry.pose.pose.orientation.z << " "
+//              << wheelOdometry.pose.pose.orientation.w << std::endl;
+//        founW.close();
+//    }
+//    return;
+//}
 
 namespace detail {
 
@@ -381,17 +505,19 @@ int main(int argc, char **argv)
     ros::Subscriber subSurfPointsFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_flat", 100, laserCloudFlatHandler);
     ros::Subscriber subSurfPointsLessFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100, laserCloudLessFlatHandler);
     ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 100, laserCloudFullResHandler);
-    ros::Subscriber subWheelIntegrator = nh.subscribe<geometry_msgs::TwistStamped>("/wheel", 200, wheelHandler, ros::TransportHints().tcpNoDelay());
+    ros::Subscriber subWheelIntegrator = nh.subscribe<roadstar::canbus::Chassis>("/roadstar/canbus/chassis", 200, wheelHandler);
+    ros::Subscriber subImuMsg = nh.subscribe<roadstar::drivers::gnss::Imu>("/roadstar/drivers/novatel/raw_imu",200, imuHandler);
 
     ros::Publisher pubLaserCloudCornerLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100);
     ros::Publisher pubLaserCloudSurfLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100);
     ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 100);
     ros::Publisher pubLaserOdometry = nh.advertise<nav_msgs::Odometry>("/laser_odom_to_init", 100);
-    ros::Publisher pubLaserPath = nh.advertise<nav_msgs::Path>("/laser_odom_path", 100);
+    ros::Publisher pubInitPath = nh.advertise<nav_msgs::Path>("/init_odom_path", 100);
     pubWheelOdometry = nh.advertise<nav_msgs::Odometry>("/wheel_odom_to_init", 100);
     pubWheelPath = nh.advertise<nav_msgs::Path>("/wheel_odom_path", 100);
+    pub_imu_odometry = nh.advertise<nav_msgs::Odometry>("/imu_odom", 100);
 
-    nav_msgs::Path laserPath;
+    nav_msgs::Path InitPath;
 
     int frameCount = 0;
     ros::Rate rate(10);
@@ -406,18 +532,18 @@ int main(int argc, char **argv)
 
         if (!cornerSharpBuf.empty() && !cornerLessSharpBuf.empty() &&
             !surfFlatBuf.empty() && !surfLessFlatBuf.empty() &&
-            !fullPointsBuf.empty() && !velBuf.empty())
+            !fullPointsBuf.empty())
         {
             timeCornerPointsSharp = cornerSharpBuf.front()->header.stamp.toSec();
             timeCornerPointsLessSharp = cornerLessSharpBuf.front()->header.stamp.toSec();
             timeSurfPointsFlat = surfFlatBuf.front()->header.stamp.toSec();
             timeSurfPointsLessFlat = surfLessFlatBuf.front()->header.stamp.toSec();
             timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
-            timeWheel = velBuf.front().first;
+            timeWheel = w_velBuf.front().first;
             curTime = timeSurfPointsFlat;
-            LOG_F(INFO, "first_timeWheel = %11.5f"
-                        "first_curTime = %11.5f"
-                        "first_prevTime = %11.5f",
+            LOG_F(INFO, "first_timeWheel = %16.10e"
+                        "first_curTime = %16.10e"
+                        "first_prevTime = %16.10e",
                   timeWheel,curTime,prevTime);
 
             while(USE_WHEEL)
@@ -483,11 +609,8 @@ int main(int argc, char **argv)
             {
                 int cornerPointsSharpNum = cornerPointsSharp->points.size();
                 int surfPointsFlatNum = surfPointsFlat->points.size();
-                LOG_F(INFO, "cornerPointsSharpNum = %d "
-                            "surfPointFlatNum = %d ",
-                            cornerPointsSharpNum, surfPointsFlatNum);
 
-                for (size_t opti_counter = 0; opti_counter < 1; ++opti_counter)
+                for (size_t opti_counter = 0; opti_counter < 2; ++opti_counter)
                 {
                     corner_correspondence = 0;
                     plane_correspondence = 0;
@@ -495,37 +618,11 @@ int main(int argc, char **argv)
                     ceres::Problem problem;
                     problem.AddParameterBlock(state_i.arr.data(), 10, new loam::StateParameterization);
                     problem.AddParameterBlock(state_j.arr.data(), 10, new loam::StateParameterization);
+                    LOG_F(INFO, "I AM HERE");
 
                     pcl::PointXYZI pointSel;
                     std::vector<int> pointSearchInd;
                     std::vector<float> pointSearchSqDis;
-
-                    if (USE_WHEEL){
-                        mBuf.lock();
-                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
-                        mBuf.unlock();
-                        if(!initFirstPoseFlag)
-                            initFirstWheelPose(prevTime,curTime,gyrVector);
-                        for(size_t i = 0; i < velVector.size(); i++)
-                        {
-                            wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
-                                                gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
-                        }
-                        Eigen::Matrix<double, 6, 1> cov;
-                        cov << 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005;
-
-                        if (wheels.size() < 2)
-                            exit(0);
-                        loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
-                        //initialize state
-                        state_j.p = state_i.q * integral_curr.mean.p + state_i.p;
-                        state_j.q = state_i.q * integral_curr.mean.q;
-
-                        problem.AddResidualBlock(
-                            new loam::WheelFactor(integral_curr),
-                            new ceres::HuberLoss(0.1),
-                            state_i.arr.data(), state_j.arr.data());
-                    }
 
                     // find correspondence for corner features
                     for (int i = 0; i < cornerPointsSharpNum; ++i)
@@ -710,34 +807,64 @@ int main(int argc, char **argv)
                     {
                         LOG_F(INFO, "less correspondence! *************************************************");
                     }
+                    if (USE_WHEEL){
+                        mBuf.lock();
+                        getWheelInterval(prevTime, curTime, velVector, gyrVector);
+                        if(accBuf.back().first > curTime && !accBuf.empty()){
+                            LOG_F(INFO, "I am Here\n");
+                            while(accBuf.front().first < curTime){
+                                accBuf.pop();
+                                gyrBuf.pop();
+                            }
+                        }
+                        mBuf.unlock();
+//                        if(!initFirstPoseFlag)
+//                            initFirstWheelPose(prevTime,curTime,gyrVector);
+                        LOG_F(INFO, "velVector.size() = %d ", velVector.size());
+                        for(size_t i = 0; i < velVector.size(); i++)
+                        {
+                            wheels.emplace_back(velVector[i].first, velVector[i].second[0], velVector[i].second[1], velVector[i].second[2],
+                                                gyrVector[i].second[0], gyrVector[i].second[1], gyrVector[i].second[2]);
+                        }
+                        Eigen::Matrix<double, 6, 1> cov;
+                        cov << 0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001;
 
+                        loam::WheelIntegral integral_curr = loam::WheelPreintegrator::Integrate(wheels, cov);
+                        problem.AddResidualBlock(
+                            new loam::WheelFactor(integral_curr),
+                            new ceres::HuberLoss(0.1),
+                            state_i.arr.data(), state_j.arr.data());
+                    }
 
                     problem.SetParameterBlockConstant(state_i.arr.data());
+                    LOG_F(INFO, "I AM HERE");
 
                     detail::LoggingCallback callback;
                     ceres::Solver::Options options;
                     options.callbacks.push_back(&callback);
                     options.linear_solver_type = ceres::DENSE_QR;
-                    options.max_num_iterations = 7;
+                    options.max_num_iterations = 4;
                     options.minimizer_progress_to_stdout = false;
                     ceres::Solver::Summary summary;
-                    //LOG_F(INFO, "I AM HERE");
+                    LOG_F(INFO, "I AM HERE");
                     ceres::Solve(options, &problem, &summary);
-                    LOG_S(INFO) << summary.BriefReport();
-                    //LOG_F(INFO, "I AM HERE");
+                    //LOG_S(INFO) << summary.BriefReport();
+                    LOG_F(INFO, "I AM HERE");
                     q_last_curr = state_i.q.conjugate() * state_j.q;
                     t_last_curr = state_i.q.conjugate() * (state_j.p - state_i.p);
                 }
+                LOG_F(INFO, "I AM HERE");
                 q_w_curr = state_j.q;
                 t_w_curr = state_j.p;
 
                 //initialize state
                 state_i.q = state_j.q;
                 state_i.p = state_j.p;
-//                state_j.p = state_j.p + state_i.q * t_last_curr;
-//                state_j.q = state_j.q * q_last_curr;
+                state_j.p = state_j.p + state_i.q * t_last_curr;
+                state_j.q = state_j.q * q_last_curr;
             }
 
+            LOG_F(INFO, "I AM HERE");
             // publish odometry
             nav_msgs::Odometry laserOdometry;
             laserOdometry.header.frame_id = "/camera_init";
@@ -755,15 +882,15 @@ int main(int argc, char **argv)
             geometry_msgs::PoseStamped laserPose;
             laserPose.header = laserOdometry.header;
             laserPose.pose = laserOdometry.pose.pose;
-            laserPath.header.stamp = laserOdometry.header.stamp;
-            laserPath.poses.push_back(laserPose);
-            laserPath.header.frame_id = "/camera_init";
-            pubLaserPath.publish(laserPath);
+            InitPath.header.stamp = laserOdometry.header.stamp;
+            InitPath.poses.push_back(laserPose);
+            InitPath.header.frame_id = "/camera_init";
+            pubInitPath.publish(InitPath);
 
             // write result to file
             if (saveLaserOdoINI) {
-                //std::ofstream founL("/home/zhouchang/catkin_fb/src/fusion_localization/results/laserWheelOdo.txt", std::ios::app);
-                std::ofstream founL("/home/zhouchang/catkin_zc/src/fusion_localization/results/laserOdo.txt", std::ios::app);
+                std::ofstream founL("/roadstar/modules/fusion_localization/results/laserWheelOdo.txt",
+                                    std::ios::app);
                 founL.setf(std::ios::fixed, std::ios::floatfield);
                 founL.precision(5);
                 founL << laserOdometry.header.stamp.toSec() << " ";

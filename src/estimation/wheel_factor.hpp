@@ -43,15 +43,7 @@ namespace loam {
             Map<Vector3d    const> p_j(two_states[1]+4);
             Map<Vector3d    const> v_j(two_states[1]+7);
 
-            CHECK_S(not q_i.coeffs().hasNaN()) << q_i.coeffs().transpose();
-            CHECK_S(not p_i.hasNaN())          << p_i.transpose();
-            CHECK_S(not v_i.hasNaN())          << v_i.transpose();
-            CHECK_S(not q_j.coeffs().hasNaN()) << q_j.coeffs().transpose();
-            CHECK_S(not p_j.hasNaN())          << p_j.transpose();
-            CHECK_S(not v_j.hasNaN())          << v_j.transpose();
-
             Map<Vector9d> r_ij(residual);
-            //r_ij.setZero();
 
             double d_t = integral_.mean.t;
             const Matrix9d& d_I_cov = integral_.covariance;
@@ -66,19 +58,11 @@ namespace loam {
             const Vector3d&    p_ij_tilde = integral_.mean.p;
             const Vector3d&    v_j_tilde  = integral_.mean.v;
 
-            CHECK_S(not q_ij_hat.coeffs().hasNaN())   << q_ij_hat.coeffs().transpose();
-            CHECK_S(not p_ij_hat.hasNaN())            << p_ij_hat.transpose();
-            CHECK_S(not v_j_hat.hasNaN())             << v_j_hat.transpose();
-            CHECK_S(not q_ij_tilde.coeffs().hasNaN()) << q_ij_tilde.coeffs().transpose();
-            CHECK_S(not p_ij_tilde.hasNaN())          << p_ij_tilde.transpose();
-            CHECK_S(not v_j_tilde.hasNaN())           << v_j_tilde.transpose();
 
             /* the residuals, i.e. the discrepency between the estimates and measurements */
             r_ij.segment<3>(0)  = Logmap(q_ij_tilde.conjugate() * q_ij_hat);
             r_ij.segment<3>(3)  = p_ij_hat - p_ij_tilde;
             r_ij.segment<3>(6)  = v_j_hat - v_j_tilde;
-
-            CHECK_S(not r_ij.hasNaN()) << r_ij.transpose();
 
             Matrix9d sqrt_info = d_I_cov.inverse().llt().matrixU();
 

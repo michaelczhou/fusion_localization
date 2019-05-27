@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(fusion_localization_zc LANGUAGES C CXX)
+project(fusion_localization LANGUAGES C CXX)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 set(EXTERNAL_PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external)
@@ -21,15 +21,15 @@ find_package(catkin REQUIRED COMPONENTS
     std_msgs geometry_msgs nav_msgs sensor_msgs
     tf cv_bridge image_transport)# camera_models)
 
-#include(DownloadProject)
-#download_project(
-#    PROJ                loguru
-#    GIT_REPOSITORY      https://github.com/emilk/loguru.git
-#    GIT_TAG             v2.0.0
-#    UPDATE_DISCONNECTED 1)
-#
-#file(COPY ${loguru_SOURCE_DIR}/loguru.hpp DESTINATION ${EXTERNAL_PROJECT_DIR})
-#file(COPY ${loguru_SOURCE_DIR}/loguru.cpp DESTINATION ${EXTERNAL_PROJECT_DIR})
+include(DownloadProject)
+download_project(
+    PROJ                loguru
+    GIT_REPOSITORY      https://github.com/emilk/loguru.git 
+    GIT_TAG             v2.0.0
+    UPDATE_DISCONNECTED 1)
+
+file(COPY ${loguru_SOURCE_DIR}/loguru.hpp DESTINATION ${EXTERNAL_PROJECT_DIR})
+file(COPY ${loguru_SOURCE_DIR}/loguru.cpp DESTINATION ${EXTERNAL_PROJECT_DIR})
 
 catkin_package()
 

@@ -17,8 +17,10 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
+#include "velodyne_msgs/PointCloud.h"
 
-#include <loguru.hpp>
+#include "../../external/loguru.hpp"
+#include "modules/msgs/drivers/lidar/proto/point_cloud.pb.h"
 
 using std::atan2;
 using std::cos;
@@ -78,7 +80,7 @@ void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
     cloud_out.is_dense = true;
 }
 
-void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr laserCloudMsg)
+void laserCloudHandler(const velodyne_msgs::PointCloudConstPtr& laserCloudMsg)
 {
     if (!systemInited)
     {
@@ -95,7 +97,17 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr laserCloudMsg)
     std::vector<int> scanEndInd(N_SCANS, 0);
 
     pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
-    pcl::fromROSMsg(*laserCloudMsg, laserCloudIn);
+    laserCloudIn.reserve(laserCloudMsg->points.size());
+    for(const auto&pt : laserCloudMsg->points){
+        if(!std::isnan(pt.x) && !std::isnan(pt.y) && !std::isnan(pt.z)){
+            pcl::PointXYZ ego_point;
+            ego_point.x = pt.x;
+            ego_point.y = pt.y;
+            ego_point.z = pt.z;
+            laserCloudIn.push_back(ego_point);
+        }
+    }
+
     std::vector<int> indices;
 
     pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
@@ -419,16 +431,15 @@ int main(int argc, char **argv)
 
     nh.param<double>("minimum_range", MINIMUM_RANGE, 0.1);
 
-    LOG_S(INFO) << "scan line number : " <<  N_SCANS;
+    //LOG_S(INFO) << "scan line number : " <<  N_SCANS;
 
     if(N_SCANS != 16 && N_SCANS != 64)
     {
-        LOG_S(ERROR) << "scan line number : " <<  N_SCANS;
+        //LOG_S(ERROR) << "scan line number : " <<  N_SCANS;
         return 0;
     }
 
-    ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/kitti/velo/pointcloud", 100, laserCloudHandler);
-
+    ros::Subscriber subLaserCloud = nh.subscribe<velodyne_msgs::PointCloud>("/roadstar/drivers/lidar/pointcloud/main", 100, laserCloudHandler);
     pubLaserCloud = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 100);
 
     pubCornerPointsSharp = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_sharp", 100);

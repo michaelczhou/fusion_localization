@@ -10,7 +10,6 @@
 
 #include <cassert>
 #include "./math.hpp"
-#include "../utility/utility.h"
 
 namespace loam {
 
@@ -22,9 +21,7 @@ namespace loam {
         using Matrix9d   = Eigen::Matrix<double, 9, 9>;
         using Matrix6d   = Eigen::Matrix<double, 6, 6>;
 
-        if (wheels.size() < 2)
-            exit(0);
-        //assert(wheels.size() > 1 && "Should provide two wheel readings at least!");
+        assert(wheels.size() > 1 && "Should provide two wheel readings at least!");
 
         State delta_W;
         Matrix9d delta_cov = Matrix9d::Zero();
@@ -64,8 +61,8 @@ namespace loam {
 
             /* Wheel increment from i to k+1, i.e. ΔI(i,k+1) */
             delta_W.t += d_t;
+            delta_W.q *= d_q;
             delta_W.p += d_p;
-            delta_W.q  = (delta_W.q * d_q).normalized();
         }
 
         delta_W.v = wheels[j].v;

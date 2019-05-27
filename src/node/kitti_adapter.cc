@@ -30,7 +30,7 @@
 #include <sstream>
 #include <streambuf>
 
-#include <loguru.hpp>
+#include "../../external/loguru.hpp"
 
 using namespace loam;
 

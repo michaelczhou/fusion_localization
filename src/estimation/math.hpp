@@ -21,15 +21,17 @@ namespace loam {
                 -phi.y(),  phi.x(),      0.0).finished();
     }
 
-    inline Eigen::Quaterniond Expmap(const Eigen::Vector3d& phi) {
-        if (phi.norm() < 1.0e-08)
+    template<typename derived_t>
+    Eigen::Quaterniond Expmap(const Eigen::MatrixBase<derived_t>& phi) {
+        if(phi.norm() < 1.0e-8)
             return Eigen::Quaterniond(1.0, phi.x()*0.5, phi.y()*0.5, phi.z()*0.5);
         return Eigen::Quaterniond(Eigen::AngleAxisd(phi.norm(), phi.normalized()));
     }
 
-    inline Eigen::Vector3d Logmap(const Eigen::Quaterniond& q) {
+    template<typename derived_t>
+    Eigen::Vector3d Logmap(const Eigen::QuaternionBase<derived_t>& q) {
         Eigen::AngleAxisd aa(q);
-        return Eigen::Vector3d(aa.angle() * aa.axis());
+        return aa.angle() * aa.axis();
     }
 
     template<typename derived_t>

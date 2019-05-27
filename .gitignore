@@ -30,3 +30,13 @@
 *.exe
 *.out
 *.app
+
+# clion
+cmake-build-debug/*
+
+# result
+results/*
+
+# log
+scripts/*.log
+

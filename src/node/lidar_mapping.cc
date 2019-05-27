@@ -21,7 +21,7 @@
 #include <iostream>
 #include <string>
 
-#include <loguru.hpp>
+#include "../../external/loguru.hpp"
 
 #include "../estimation/lidar_factor.hpp"
 
@@ -138,21 +138,21 @@ void pointAssociateTobeMapped(pcl::PointXYZI const *const pi, pcl::PointXYZI *co
 	po->intensity = pi->intensity;
 }
 
-void laserCloudCornerLastHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudCornerLast2)
+void laserCloudCornerLastHandler(const sensor_msgs::PointCloud2ConstPtr laserCloudCornerLast2)
 {
 	mBuf.lock();
 	cornerLastBuf.push(laserCloudCornerLast2);
 	mBuf.unlock();
 }
 
-void laserCloudSurfLastHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudSurfLast2)
+void laserCloudSurfLastHandler(const sensor_msgs::PointCloud2ConstPtr laserCloudSurfLast2)
 {
 	mBuf.lock();
 	surfLastBuf.push(laserCloudSurfLast2);
 	mBuf.unlock();
 }
 
-void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudFullRes2)
+void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr laserCloudFullRes2)
 {
 	mBuf.lock();
 	fullResBuf.push(laserCloudFullRes2);
@@ -160,7 +160,7 @@ void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloud
 }
 
 //receive odomtry
-void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
+void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr laserOdometry)
 {
 	mBuf.lock();
 	odometryBuf.push(laserOdometry);
@@ -767,7 +767,7 @@ void process()
 
 			// write result to file
 			if (saveAftMapped) {
-				std::ofstream founL("/home/zhouchang/catkin_zc/src/fusion_localization/results/aft_mapped.txt",
+				std::ofstream founL("/roadstar/modules/fusion_localization/results/aft_mapped.txt",
 									std::ios::app);
 				founL.setf(std::ios::fixed, std::ios::floatfield);
 				founL.precision(5);
@@ -791,18 +791,18 @@ void process()
 			laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
 			pubLaserAfterMappedPath.publish(laserAfterMappedPath);
 
-			static tf::TransformBroadcaster br;
-			tf::Transform transform;
-			tf::Quaternion q;
-			transform.setOrigin(tf::Vector3(t_w_curr(0),
-											t_w_curr(1),
-											t_w_curr(2)));
-			q.setW(q_w_curr.w());
-			q.setX(q_w_curr.x());
-			q.setY(q_w_curr.y());
-			q.setZ(q_w_curr.z());
-			transform.setRotation(q);
-			br.sendTransform(tf::StampedTransform(transform, odomAftMapped.header.stamp, "/camera_init", "/aft_mapped"));
+//			static tf::TransformBroadcaster br;
+//			tf::Transform transform;
+//			tf::Quaternion q;
+//			transform.setOrigin(tf::Vector3(t_w_curr(0),
+//											t_w_curr(1),
+//											t_w_curr(2)));
+//			q.setW(q_w_curr.w());
+//			q.setX(q_w_curr.x());
+//			q.setY(q_w_curr.y());
+//			q.setZ(q_w_curr.z());
+//			transform.setRotation(q);
+//			br.sendTransform(tf::StampedTransform(transform, odomAftMapped.header.stamp, "/camera_init", "/aft_mapped"));
 
 			frameCount++;
 		}
