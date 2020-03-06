@@ -4,4 +4,6 @@ fusion_localization
 
 运行步骤：
 
-1.roslaunch 
+1.roslaunch fusion_localization kitti_adapter
+
+2.roslaunch fusion_localization lidar_64
